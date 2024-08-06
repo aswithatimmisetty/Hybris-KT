@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+ Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+-->
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:int="http://www.springframework.org/schema/integration"
+	xmlns:file="http://www.springframework.org/schema/integration/file"
+	xmlns:p="http://www.springframework.org/schema/p"
+	xmlns:context="http://www.springframework.org/schema/context"
+	xsi:schemaLocation="http://www.springframework.org/schema/integration 
+	http://www.springframework.org/schema/integration/spring-integration.xsd
+	http://www.springframework.org/schema/integration/file 
+	http://www.springframework.org/schema/integration/file/spring-integration-file.xsd
+	http://www.springframework.org/schema/beans 
+	http://www.springframework.org/schema/beans/spring-beans.xsd
+	http://www.springframework.org/schema/context
+    http://www.springframework.org/schema/context/spring-context.xsd">
+
+    <context:annotation-config/>
+	<bean id="baseDirectoryBookstore" class="java.lang.String">
+		<constructor-arg value="#{baseDirectory}/${tenantId}/bookstore" />
+	</bean>
+	<!-- 1) Scan for files in given directory-->
+	<file:inbound-channel-adapter id="batchFilesBookstore" directory="#{baseDirectoryBookstore}"
+								  filename-regex="^(.*)-(\d+)\.csv" comparator="fileOrderComparator">
+		<int:poller fixed-rate="1000" />
+	</file:inbound-channel-adapter>
+
+	<!-- 2) move the file to processing and create header -->
+	<file:outbound-gateway request-channel="batchFilesBookstore" reply-channel="batchFilesBookstoreProc"
+						   directory="#{baseDirectoryBookstore}/processing" delete-source-files="true" />
+
+	<!-- 3) initialize the batch header with relevant information -->
+	<int:service-activator input-channel="batchFilesBookstoreProc" output-channel="batchFilesHeaderInit" ref="bookstoreHeaderSetupTask"
+						   method="execute" />
+	<bean id="bookstoreHeaderSetupTask" class="de.hybris.platform.acceleratorservices.dataimport.batch.task.HeaderSetupTask">
+		<property name="catalog" value="bookstoreProductCatalog" />
+		<property name="net" value="false" />
+		<property name="storeBaseDirectory" ref="baseDirectoryBookstore" />
+	</bean>
+
+	<!--4) RentalModel Impex Converter-->
+	<bean id="batchRentalConverter" class="de.hybris.platform.acceleratorservices.dataimport.batch.converter.impl.DefaultImpexConverter">
+		<property name="header">
+			<value>
+				#{defaultImpexProductHeader}
+				INSERT_UPDATE Rental; rentalId[unique=true];startDate[dateformat=dd.MM.yyyy];endDate[dateformat=dd.MM.yyyy]
+			</value>
+		</property>
+		<property name="impexRow">
+			<value>;{+0};{1};{2}</value>
+		</property>
+	</bean>
+
+	<!-- 5) Transformer converter mapping -->
+	<bean id="rentalConverterMapping"
+		  class="de.hybris.platform.acceleratorservices.dataimport.batch.converter.mapping.impl.DefaultConverterMapping"
+		  p:mapping="rentals"
+		  p:converter-ref="batchRentalConverter">
+	</bean>
+</beans>
